@@ -110,3 +110,61 @@ class StealthUtils:
         StealthUtils.random_delay(100, 300)
         element.click()
         StealthUtils.random_delay(100, 300)
+
+
+# Reads the bot message right after the question at the given index. NotebookLM
+# puts a collapsible "Thoughts" header (thinking-chain-view) in front of the answer
+# body, and while generating only this header is present, so it is left out
+_ANSWER_AFTER_QUESTION_JS = """
+index => {
+    const messages = document.querySelectorAll('.from-user-container, .to-user-container');
+    let questionIndex = -1;
+    for (const message of messages) {
+        if (message.classList.contains('from-user-container')) {
+            questionIndex += 1;
+            if (questionIndex > index) return '';
+            continue;
+        }
+        if (questionIndex !== index) continue;
+        const body = message.querySelector('.message-text-content') || message;
+        const clone = body.cloneNode(true);
+        clone.querySelectorAll('thinking-chain-view').forEach(node => node.remove());
+        return clone.innerText.trim();
+    }
+    return '';
+}
+"""
+
+
+class ChatUtils:
+    """Locate the answer to a question in the NotebookLM chat"""
+
+    MESSAGE_SELECTOR = ".from-user-container, .to-user-container"
+    QUESTION_SELECTOR = ".from-user-container"
+
+    @staticmethod
+    def wait_for_history(page: Page, stable_polls: int = 3, timeout_seconds: int = 20) -> None:
+        """Wait until the number of rendered chat messages stops changing
+
+        Past messages are rendered several seconds after the input appears.
+        Counting questions or typing before that mixes old answers into the
+        new one and can drop typed characters (#25)
+        """
+        last_count = -1
+        stable = 0
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline and stable < stable_polls:
+            count = len(page.query_selector_all(ChatUtils.MESSAGE_SELECTOR))
+            stable = stable + 1 if count == last_count else 0
+            last_count = count
+            time.sleep(1)
+
+    @staticmethod
+    def count_questions(page: Page) -> int:
+        """Count the questions currently shown in the chat"""
+        return len(page.query_selector_all(ChatUtils.QUESTION_SELECTOR))
+
+    @staticmethod
+    def answer_after_question(page: Page, index: int) -> str:
+        """Return the answer to the question at index, or an empty string if not yet shown"""
+        return page.evaluate(_ANSWER_AFTER_QUESTION_JS, index)

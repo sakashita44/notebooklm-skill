@@ -7,7 +7,7 @@ Based on the original NotebookLM API implementation
 
 import time
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from pathlib import Path
 
 from patchright.sync_api import BrowserContext, Page
@@ -15,7 +15,7 @@ from patchright.sync_api import BrowserContext, Page
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from browser_utils import StealthUtils
+from browser_utils import ChatUtils, StealthUtils
 
 
 class BrowserSession:
@@ -66,9 +66,9 @@ class BrowserSession:
 
             # Wait for page to be ready
             self._wait_for_ready()
+            ChatUtils.wait_for_history(self.page)
 
             # Simulate human inspection
-            self.stealth.random_mouse_movement(self.page)
             self.stealth.random_delay(300, 600)
 
             print(f"✅ Session {self.id} ready!")
@@ -104,8 +104,8 @@ class BrowserSession:
 
             print(f"💬 [{self.id}] Asking: {question}")
 
-            # Snapshot current answer to detect new response
-            previous_answer = self._snapshot_latest_response()
+            # Our question will be the first one after those shown now
+            questions_before = ChatUtils.count_questions(self.page)
 
             # Find chat input
             chat_input_selector = "textarea.query-box-input"
@@ -130,7 +130,7 @@ class BrowserSession:
             self.stealth.random_delay(1500, 3000)
 
             # Get new answer
-            answer = self._wait_for_latest_answer(previous_answer)
+            answer = self._wait_for_latest_answer(questions_before)
 
             if not answer:
                 raise Exception("Empty response from NotebookLM")
@@ -154,19 +154,8 @@ class BrowserSession:
                 "session_id": self.id
             }
 
-    def _snapshot_latest_response(self) -> Optional[str]:
-        """Get the current latest response text"""
-        try:
-            # Use correct NotebookLM selector
-            responses = self.page.query_selector_all(".to-user-container .message-text-content")
-            if responses:
-                return responses[-1].inner_text()
-        except Exception:
-            pass
-        return None
-
-    def _wait_for_latest_answer(self, previous_answer: Optional[str], timeout: int = 120) -> str:
-        """Wait for and extract the new answer"""
+    def _wait_for_latest_answer(self, questions_before: int, timeout: int = 120) -> str:
+        """Wait for and extract the answer to the question asked after questions_before"""
         start_time = time.time()
         last_candidate = None
         stable_count = 0
@@ -182,22 +171,17 @@ class BrowserSession:
                 pass
 
             try:
-                # Use correct NotebookLM selector
-                responses = self.page.query_selector_all(".to-user-container .message-text-content")
+                latest_text = ChatUtils.answer_after_question(self.page, questions_before)
 
-                if responses:
-                    latest_text = responses[-1].inner_text().strip()
-
-                    # Check if it's a new response
-                    if latest_text and latest_text != previous_answer:
-                        # Check if text is stable (3 consecutive polls)
-                        if latest_text == last_candidate:
-                            stable_count += 1
-                            if stable_count >= 3:
-                                return latest_text
-                        else:
-                            stable_count = 1
-                            last_candidate = latest_text
+                if latest_text:
+                    # Check if text is stable (3 consecutive polls)
+                    if latest_text == last_candidate:
+                        stable_count += 1
+                        if stable_count >= 3:
+                            return latest_text
+                    else:
+                        stable_count = 1
+                        last_candidate = latest_text
 
             except Exception:
                 pass

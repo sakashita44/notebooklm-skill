@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from auth_manager import AuthManager
 from notebook_manager import NotebookLibrary
 from config import QUERY_INPUT_SELECTORS, NOTEBOOKLM_URL_PATTERN
-from browser_utils import BrowserFactory, StealthUtils
+from browser_utils import BrowserFactory, ChatUtils, StealthUtils
 
 
 # Follow-up reminder (adapted from MCP server for stateless operation)
@@ -34,42 +34,6 @@ FOLLOW_UP_REMINDER = (
     "If anything is still unclear or missing, ask me another comprehensive question "
     "that includes all necessary context (since each question opens a new browser session)."
 )
-
-
-# Reads the bot message right after the question at the given index. NotebookLM
-# puts a collapsible "Thoughts" header (thinking-chain-view) in front of the answer
-# body, and while generating only this header is present, so it is left out
-_ANSWER_AFTER_QUESTION_JS = """
-index => {
-    const messages = document.querySelectorAll('.from-user-container, .to-user-container');
-    let questionIndex = -1;
-    for (const message of messages) {
-        if (message.classList.contains('from-user-container')) {
-            questionIndex += 1;
-            if (questionIndex > index) return '';
-            continue;
-        }
-        if (questionIndex !== index) continue;
-        const body = message.querySelector('.message-text-content') || message;
-        const clone = body.cloneNode(true);
-        clone.querySelectorAll('thinking-chain-view').forEach(node => node.remove());
-        return clone.innerText.trim();
-    }
-    return '';
-}
-"""
-
-
-def _wait_for_history(page, stable_polls: int = 3, timeout_seconds: int = 20) -> None:
-    """Wait until the number of rendered chat messages stops changing"""
-    last_count = -1
-    stable = 0
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline and stable < stable_polls:
-        count = len(page.query_selector_all(".from-user-container, .to-user-container"))
-        stable = stable + 1 if count == last_count else 0
-        last_count = count
-        time.sleep(1)
 
 
 def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> str:
@@ -135,11 +99,9 @@ def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> s
             print("  ❌ Could not find query input")
             return None
 
-        # Past messages are rendered several seconds after the input appears.
-        # Counting questions or typing before that mixes old answers into the
-        # new one and can drop typed characters (#25)
-        _wait_for_history(page)
-        questions_before = len(page.query_selector_all(".from-user-container"))
+        # Count questions only after the chat history has been rendered (#25)
+        ChatUtils.wait_for_history(page)
+        questions_before = ChatUtils.count_questions(page)
 
         # Type question (human-like, fast)
         print("  ⏳ Typing question...")
@@ -174,7 +136,7 @@ def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> s
             except:
                 pass
 
-            candidate = page.evaluate(_ANSWER_AFTER_QUESTION_JS, questions_before)
+            candidate = ChatUtils.answer_after_question(page, questions_before)
 
             if candidate:
                 if candidate == last_text:

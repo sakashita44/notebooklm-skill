@@ -3,6 +3,7 @@ Configuration for NotebookLM Skill
 Centralizes constants, selectors, and paths
 """
 
+import re
 from pathlib import Path
 
 # Paths
@@ -13,6 +14,15 @@ BROWSER_PROFILE_DIR = BROWSER_STATE_DIR / "browser_profile"
 STATE_FILE = BROWSER_STATE_DIR / "state.json"
 AUTH_INFO_FILE = DATA_DIR / "auth_info.json"
 LIBRARY_FILE = DATA_DIR / "library.json"
+
+# NotebookLM URL
+# Since September 2026 notebooklm.google.com redirects to notebook.google.com,
+# so both hosts count as NotebookLM when checking where the browser ended up
+NOTEBOOKLM_URL = "https://notebook.google.com"
+NOTEBOOKLM_HOSTS = ("notebook.google.com", "notebooklm.google.com")
+NOTEBOOKLM_URL_PATTERN = re.compile(
+    r"^https://(" + "|".join(re.escape(host) for host in NOTEBOOKLM_HOSTS) + r")/"
+)
 
 # NotebookLM Selectors
 QUERY_INPUT_SELECTORS = [

@@ -12,7 +12,6 @@ See: https://github.com/microsoft/playwright/issues/36139
 import argparse
 import sys
 import time
-import re
 from pathlib import Path
 
 from patchright.sync_api import sync_playwright
@@ -22,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from auth_manager import AuthManager
 from notebook_manager import NotebookLibrary
-from config import QUERY_INPUT_SELECTORS, RESPONSE_SELECTORS
+from config import QUERY_INPUT_SELECTORS, RESPONSE_SELECTORS, NOTEBOOKLM_URL_PATTERN
 from browser_utils import BrowserFactory, StealthUtils
 
 
@@ -35,6 +34,22 @@ FOLLOW_UP_REMINDER = (
     "If anything is still unclear or missing, ask me another comprehensive question "
     "that includes all necessary context (since each question opens a new browser session)."
 )
+
+
+# NotebookLM puts a collapsible "Thoughts" header (thinking-chain-view) in front of
+# the answer body, and while generating only this header is present
+_ANSWER_TEXT_JS = """
+el => {
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('thinking-chain-view').forEach(node => node.remove());
+    return clone.innerText.trim();
+}
+"""
+
+
+def _answer_text(element) -> str:
+    """Return the answer text of a response element without the thinking header"""
+    return element.evaluate(_ANSWER_TEXT_JS)
 
 
 def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> str:
@@ -77,7 +92,7 @@ def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> s
         page.goto(notebook_url, wait_until="domcontentloaded")
 
         # Wait for NotebookLM
-        page.wait_for_url(re.compile(r"^https://notebooklm\.google\.com/"), timeout=10000)
+        page.wait_for_url(NOTEBOOKLM_URL_PATTERN, timeout=10000)
 
         # Wait for query input (MCP approach)
         print("  ⏳ Waiting for query input...")
@@ -114,7 +129,7 @@ def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> s
             try:
                 elements = page.query_selector_all(selector)
                 for el in elements:
-                    text = el.inner_text().strip()
+                    text = _answer_text(el)
                     if text:
                         existing_responses.add(text)
             except:
@@ -164,7 +179,7 @@ def ask_notebooklm(question: str, notebook_url: str, headless: bool = True) -> s
                         continue
                     # Scan from newest to oldest
                     for el in reversed(elements):
-                        text = el.inner_text().strip()
+                        text = _answer_text(el)
                         if not text:
                             continue
                         # Skip transient placeholders
